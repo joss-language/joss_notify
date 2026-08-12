@@ -1,5 +1,5 @@
 name: joss_notify
-version: 2.0.3
+version: 2.0.4
 description: Plugin oficial para envío de notificaciones Push (FCM) y notificaciones internas en Joss.
 repository: https://github.com/joss-language/joss_notify
 license: MIT
