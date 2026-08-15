@@ -67,39 +67,41 @@ class Notify {
             "schedule": $this->schedule_value
         }
 
+        // 1. Custom Webhook / Gateway
         $webhookUrl = env("NOTIFY_WEBHOOK_URL", "")
         (!empty($webhookUrl)) ? {
-            print("[Notify] Enviando via Webhook a: " . $webhookUrl)
+            print("[joss_notify] Despachando via Webhook a: " . $webhookUrl)
             return Http::json("POST", $webhookUrl, $payload, {
                 "Content-Type": "application/json"
             })
         } : {}
 
+        // 2. FCM Gateway / Endpoint
+        $fcmUrl = env("FCM_URL", "")
         $fcmKey = env("FCM_SERVER_KEY", "")
-        (!empty($fcmKey)) ? {
-            $fcmUrl = env("FCM_URL", "https://fcm.googleapis.com/fcm/send")
-            $target = (!empty($payload["user"])) ? $payload["user"] : ""
-            (empty($target) && !empty($payload["segment"])) ? {
-                $target = "/topics/" . $payload["segment"]
+        (!empty($fcmUrl) && !empty($fcmKey)) ? {
+            $target = (!empty($this->user_value)) ? $this->user_value : ""
+            (empty($target) && !empty($this->segment_value)) ? {
+                $target = "/topics/" . $this->segment_value
             } : {}
 
             $fcmPayload = {
                 "to": $target,
                 "notification": {
-                    "title": $payload["title"],
-                    "body": $payload["message"]
+                    "title": $this->title_value,
+                    "body": $this->message_value
                 },
                 "data": $payload
             }
 
-            print("[Notify] Enviando push a FCM...")
+            print("[joss_notify] Despachando push a FCM endpoint...")
             return Http::json("POST", $fcmUrl, $fcmPayload, {
                 "Authorization": "key=" . $fcmKey,
                 "Content-Type": "application/json"
             })
         } : {}
 
-        print("[Notify] Notificación procesada con éxito para: " . $payload["user"])
+        print("[joss_notify] Notificación procesada con éxito para: " . $this->user_value)
         return {"ok": true, "sent": true, "data": $payload}
     }
 }
