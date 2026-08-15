@@ -69,13 +69,13 @@ class Notify {
         }
 
         $fcmUrl = env("FCM_URL", "https://fcm.googleapis.com/fcm/send")
-        if (empty($this->fcm_key) == false) {
+        return (!empty($this->fcm_key)) ? {
             return Http::json("POST", $fcmUrl, $payload, {
                 "Authorization": "key=" . $this->fcm_key,
                 "Content-Type": "application/json"
             })
+        } : {
+            return {"ok": true, "sent": true, "data": $payload}
         }
-
-        return {"ok": true, "sent": true, "data": $payload}
     }
 }
