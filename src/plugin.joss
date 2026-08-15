@@ -1,39 +1,3 @@
-func send($payload) {
-    $fcmKey = env("FCM_SERVER_KEY", "")
-    $webhookUrl = env("NOTIFY_WEBHOOK_URL", "")
-
-    if (!empty($webhookUrl)) {
-        return Http::json("POST", $webhookUrl, $payload, {
-            "Content-Type": "application/json"
-        })
-    }
-
-    if (!empty($fcmKey)) {
-        $fcmUrl = env("FCM_URL", "https://fcm.googleapis.com/fcm/send")
-        $target = (!empty($payload["user"])) ? $payload["user"] : ""
-        if (empty($target) && !empty($payload["segment"])) {
-            $target = "/topics/" . $payload["segment"]
-        }
-
-        $fcmPayload = {
-            "to": $target,
-            "notification": {
-                "title": $payload["title"],
-                "body": $payload["message"]
-            },
-            "data": $payload
-        }
-
-        return Http::json("POST", $fcmUrl, $fcmPayload, {
-            "Authorization": "key=" . $fcmKey,
-            "Content-Type": "application/json"
-        })
-    }
-
-    print("[joss_notify] Notificación procesada para: " . $payload["user"])
-    return {"ok": true, "sent": true, "data": $payload}
-}
-
 class Notify {
     Init constructor() {
         $this->app_ids = []
@@ -103,6 +67,52 @@ class Notify {
             "schedule": $this->schedule_value
         }
 
-        return send($payload)
+        $webhookUrl = env("NOTIFY_WEBHOOK_URL", "")
+        (!empty($webhookUrl)) ? {
+            print("[Notify] Enviando via Webhook a: " . $webhookUrl)
+            return Http::json("POST", $webhookUrl, $payload, {
+                "Content-Type": "application/json"
+            })
+        } : {}
+
+        $fcmKey = env("FCM_SERVER_KEY", "")
+        (!empty($fcmKey)) ? {
+            $fcmUrl = env("FCM_URL", "https://fcm.googleapis.com/fcm/send")
+            $target = (!empty($payload["user"])) ? $payload["user"] : ""
+            (empty($target) && !empty($payload["segment"])) ? {
+                $target = "/topics/" . $payload["segment"]
+            } : {}
+
+            $fcmPayload = {
+                "to": $target,
+                "notification": {
+                    "title": $payload["title"],
+                    "body": $payload["message"]
+                },
+                "data": $payload
+            }
+
+            print("[Notify] Enviando push a FCM...")
+            return Http::json("POST", $fcmUrl, $fcmPayload, {
+                "Authorization": "key=" . $fcmKey,
+                "Content-Type": "application/json"
+            })
+        } : {}
+
+        print("[Notify] Notificación procesada con éxito para: " . $payload["user"])
+        return {"ok": true, "sent": true, "data": $payload}
     }
+}
+
+func send($payload) {
+    $n = new Notify()
+    (!empty($payload["apps"])) ? { $n->apps($payload["apps"]) } : {}
+    (!empty($payload["user"])) ? { $n->user($payload["user"]) } : {}
+    (!empty($payload["segment"])) ? { $n->segment($payload["segment"]) } : {}
+    (!empty($payload["title"])) ? { $n->title($payload["title"]) } : {}
+    (!empty($payload["message"])) ? { $n->message($payload["message"]) } : {}
+    (!empty($payload["html"])) ? { $n->html($payload["html"]) } : {}
+    (!empty($payload["type"])) ? { ($payload["type"] == "in_app") ? { $n->inApp() } : {} } : {}
+    (!empty($payload["schedule"])) ? { $n->schedule($payload["schedule"]) } : {}
+    return $n->send()
 }
