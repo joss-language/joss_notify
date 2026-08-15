@@ -186,8 +186,20 @@ if __name__ == '__main__':
     print(json.dumps(run_fcm(sys.argv[1] if len(sys.argv) > 1 else '{}', sys.argv[2] if len(sys.argv) > 2 else 'storage/secrets/firebase-service-account.json')))
 "
             $payloadJson = JSON::stringify($payload)
-            $resRaw = System::Run("python", ["-c", $pyScript, $payloadJson, $credsPath])
-            $res = ($resRaw != "") ? JSON::parse($resRaw) : {"ok": false, "error": "No hubo respuesta del despachador Python"}
+            $resRaw = ""
+            $pyCandidates = ["python3", "python", "/usr/bin/python3", "/usr/local/bin/python3", "py"]
+            $customPy = env("PYTHON_BIN", env("PYTHON_PATH", ""))
+            ($customPy != "") ? {
+                $pyCandidates = [$customPy, "python3", "python", "/usr/bin/python3", "/usr/local/bin/python3", "py"]
+            } : {}
+
+            foreach ($pyCandidates as $cand) {
+                ($resRaw == "" || $resRaw == nil) ? {
+                    $resRaw = System::Run($cand, ["-c", $pyScript, $payloadJson, $credsPath])
+                } : {}
+            }
+
+            $res = ($resRaw != "" && $resRaw != nil) ? JSON::parse($resRaw) : {"ok": false, "error": "No hubo respuesta del despachador Python (verifique que python3 o python esté instalado en el servidor)"}
 
             ($res && $res["ok"] == true) ? {
                 print("[joss_notify] Push FCM v1 enviado con éxito para: " . $this->user_value)
