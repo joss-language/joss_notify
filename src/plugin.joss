@@ -8,6 +8,9 @@ class Notify {
         $this->html_value = ""
         $this->type_value = "push"
         $this->schedule_value = 0
+        $this->data_value = {}
+        $this->credentials_path = ""
+        $this->last_error = ""
     }
 
     func app($app) {
@@ -25,8 +28,18 @@ class Notify {
         return $this
     }
 
+    func topic($topic) {
+        $this->segment_value = $topic
+        return $this
+    }
+
     func user($user) {
         $this->user_value = $user
+        return $this
+    }
+
+    func token($token) {
+        $this->user_value = $token
         return $this
     }
 
@@ -40,8 +53,18 @@ class Notify {
         return $this
     }
 
+    func body($body) {
+        $this->message_value = $body
+        return $this
+    }
+
     func html($html) {
         $this->html_value = $html
+        return $this
+    }
+
+    func data($data) {
+        $this->data_value = $data
         return $this
     }
 
@@ -50,9 +73,23 @@ class Notify {
         return $this
     }
 
+    func push() {
+        $this->type_value = "push"
+        return $this
+    }
+
+    func credentials($path) {
+        $this->credentials_path = $path
+        return $this
+    }
+
     func schedule($timestamp) {
         $this->schedule_value = $timestamp
         return $this
+    }
+
+    func lastError() {
+        return $this->last_error
     }
 
     func send() {
@@ -64,28 +101,153 @@ class Notify {
             "message": $this->message_value,
             "html": $this->html_value,
             "type": $this->type_value,
-            "schedule": $this->schedule_value
+            "schedule": $this->schedule_value,
+            "data": $this->data_value
         }
 
-        // 1. Custom Webhook / Gateway
-        $webhookUrl = env("NOTIFY_WEBHOOK_URL", "")
-        (!empty($webhookUrl)) ? {
-            print("[joss_notify] Despachando via Webhook a: " . $webhookUrl)
-            return Http::json("POST", $webhookUrl, $payload, {
-                "Content-Type": "application/json"
-            })
+        // 1. In-App Notification (No requiere despacho push externo)
+        ($this->type_value == "in_app") ? {
+            print("[joss_notify] Notificación in-app registrada para: " . $this->user_value)
+            $this->last_error = ""
+            return {"ok": true, "sent": true, "type": "in_app", "data": $payload}
         } : {}
 
-        // 2. FCM Gateway / Endpoint
-        $fcmUrl = env("FCM_URL", "")
-        $fcmKey = env("FCM_SERVER_KEY", "")
-        (!empty($fcmUrl) && !empty($fcmKey)) ? {
-            $target = (!empty($this->user_value)) ? $this->user_value : ""
-            (empty($target) && !empty($this->segment_value)) ? {
-                $target = "/topics/" . $this->segment_value
+        // 2. Custom Webhook / Gateway
+        $webhookUrl = env("NOTIFY_WEBHOOK_URL", "")
+        ($webhookUrl != "") ? {
+            print("[joss_notify] Despachando via Webhook a: " . $webhookUrl)
+            $res = Http::json("POST", $webhookUrl, $payload, {
+                "Content-Type": "application/json"
+            })
+            $this->last_error = ""
+            return {"ok": true, "sent": true, "gateway": "webhook", "response": $res, "data": $payload}
+        } : {}
+
+        // 3. FCM HTTP v1 con Service Account Credentials (Recomendado / Estándar Firebase)
+        $credsPath = ($this->credentials_path != "") ? $this->credentials_path : env("FCM_CREDENTIALS_PATH", "")
+        ($credsPath == "") ? { $credsPath = env("FIREBASE_CREDENTIALS", "") } : {}
+        ($credsPath == "") ? { $credsPath = env("GOOGLE_APPLICATION_CREDENTIALS", "") } : {}
+        ($credsPath == "" && file_exists("storage/secrets/firebase-service-account.json")) ? {
+            $credsPath = "storage/secrets/firebase-service-account.json"
+        } : {}
+
+        ($credsPath != "" && file_exists($credsPath)) ? {
+            $pyScript = "import sys, json, time, urllib.request, urllib.parse, base64
+def run_fcm(p_str, c_path):
+    try:
+        p = json.loads(p_str)
+        with open(c_path, 'r', encoding='utf-8') as f:
+            c = json.load(f)
+        client_email = c['client_email']
+        project_id = c['project_id']
+        pk_pem = c['private_key'].encode('utf-8')
+        t_uri = c.get('token_uri', 'https://oauth2.googleapis.com/token')
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        now = int(time.time())
+        claim = {'iss': client_email, 'scope': 'https://www.googleapis.com/auth/firebase.messaging', 'aud': t_uri, 'iat': now, 'exp': now + 3600}
+        def b64url(b): return base64.urlsafe_b64encode(b).rstrip(b'=').decode('utf-8')
+        h_b64 = b64url(json.dumps({'alg': 'RS256', 'typ': 'JWT'}).encode('utf-8'))
+        c_b64 = b64url(json.dumps(claim).encode('utf-8'))
+        sig_in = f'{h_b64}.{c_b64}'.encode('utf-8')
+        pk = load_pem_private_key(pk_pem, password=None)
+        sig = pk.sign(sig_in, padding.PKCS1v15(), hashes.SHA256())
+        jwt_tok = f'{h_b64}.{c_b64}.{b64url(sig)}'
+        req_data = urllib.parse.urlencode({'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': jwt_tok}).encode('utf-8')
+        o_req = urllib.request.Request(t_uri, data=req_data, headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        with urllib.request.urlopen(o_req, timeout=15) as r:
+            token = json.loads(r.read().decode('utf-8'))['access_token']
+        target = p.get('user', '')
+        segment = p.get('segment', '')
+        custom_data = p.get('data', {})
+        data_map = {}
+        if isinstance(custom_data, dict):
+            for k, v in custom_data.items(): data_map[str(k)] = str(v)
+        app_name = str(p.get('apps', [''])[0] if isinstance(p.get('apps'), list) and len(p.get('apps')) > 0 else p.get('apps', ''))
+        data_map['app'] = app_name
+        data_map['type'] = str(p.get('type', 'push'))
+        data_map['title'] = str(p.get('title', ''))
+        data_map['message'] = str(p.get('message', ''))
+        msg = {
+            'notification': {'title': p.get('title', ''), 'body': p.get('message', '')},
+            'data': data_map,
+            'android': {'priority': 'HIGH', 'notification': {'channel_id': 'default', 'sound': 'default', 'default_sound': True}}
+        }
+        if target: msg['token'] = target
+        elif segment: msg['topic'] = segment.replace('/topics/', '')
+        else: return {'ok': False, 'error': 'No device token or topic specified'}
+        fcm_req = urllib.request.Request(f'https://fcm.googleapis.com/v1/projects/{project_id}/messages:send', data=json.dumps({'message': msg}).encode('utf-8'), headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        with urllib.request.urlopen(fcm_req, timeout=15) as fr:
+            return {'ok': True, 'sent': True, 'response': json.loads(fr.read().decode('utf-8'))}
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+if __name__ == '__main__':
+    print(json.dumps(run_fcm(sys.argv[1] if len(sys.argv) > 1 else '{}', sys.argv[2] if len(sys.argv) > 2 else 'storage/secrets/firebase-service-account.json')))
+"
+            $payloadJson = JSON::stringify($payload)
+            $resRaw = System::Run("python", ["-c", $pyScript, $payloadJson, $credsPath])
+            $res = ($resRaw != "") ? JSON::parse($resRaw) : {"ok": false, "error": "No hubo respuesta del despachador Python"}
+
+            ($res && $res["ok"] == true) ? {
+                print("[joss_notify] Push FCM v1 enviado con éxito para: " . $this->user_value)
+                $this->last_error = ""
+                return {"ok": true, "sent": true, "gateway": "fcm_v1_service_account", "response": $res["response"], "data": $payload}
+            } : {
+                $err = ($res && $res["error"]) ? $res["error"] : "Error desconocido despachando FCM v1"
+                $this->last_error = $err
+                print("[joss_notify] Error en despacho FCM v1: " . $err)
+                return {"ok": false, "sent": false, "error": $err, "data": $payload}
+            }
+        } : {}
+
+        // 4. Direct FCM HTTP v1 con Bearer Token
+        $fcmToken = env("FCM_ACCESS_TOKEN", "")
+        $fcmProject = env("FCM_PROJECT_ID", "")
+        ($fcmToken != "" && $fcmProject != "") ? {
+            $target = ($this->user_value != "") ? $this->user_value : ""
+            $targetKey = "token"
+            ($target == "" && $this->segment_value != "") ? {
+                $target = $this->segment_value
+                $targetKey = "topic"
             } : {}
 
             $fcmPayload = {
+                "message": {
+                    $targetKey: $target,
+                    "notification": {
+                        "title": $this->title_value,
+                        "body": $this->message_value
+                    },
+                    "data": {
+                        "app": (count($this->app_ids) > 0 ? $this->app_ids[0] : ""),
+                        "type": $this->type_value,
+                        "title": $this->title_value,
+                        "message": $this->message_value
+                    }
+                }
+            }
+
+            print("[joss_notify] Despachando push via FCM v1 Bearer Token...")
+            $fcmUrl = "https://fcm.googleapis.com/v1/projects/" . $fcmProject . "/messages:send"
+            $res = Http::json("POST", $fcmUrl, $fcmPayload, {
+                "Authorization": "Bearer " . $fcmToken,
+                "Content-Type": "application/json"
+            })
+            $this->last_error = ""
+            return {"ok": true, "sent": true, "gateway": "fcm_v1_bearer", "response": $res, "data": $payload}
+        } : {}
+
+        // 5. FCM Gateway Legacy / Proxy
+        $fcmUrl = env("FCM_URL", "")
+        $fcmKey = env("FCM_SERVER_KEY", "")
+        ($fcmUrl != "" && $fcmKey != "") ? {
+            $target = ($this->user_value != "") ? $this->user_value : ""
+            ($target == "" && $this->segment_value != "") ? {
+                $target = "/topics/" . $this->segment_value
+            } : {}
+
+            $fcmLegacyPayload = {
                 "to": $target,
                 "notification": {
                     "title": $this->title_value,
@@ -94,27 +256,38 @@ class Notify {
                 "data": $payload
             }
 
-            print("[joss_notify] Despachando push a FCM endpoint...")
-            return Http::json("POST", $fcmUrl, $fcmPayload, {
+            print("[joss_notify] Despachando push a endpoint legacy FCM...")
+            $res = Http::json("POST", $fcmUrl, $fcmLegacyPayload, {
                 "Authorization": "key=" . $fcmKey,
                 "Content-Type": "application/json"
             })
+            $this->last_error = ""
+            return {"ok": true, "sent": true, "gateway": "fcm_legacy", "response": $res, "data": $payload}
         } : {}
 
-        print("[joss_notify] Notificación procesada con éxito para: " . $this->user_value)
-        return {"ok": true, "sent": true, "data": $payload}
+        // 6. Si no hay transporte configurado, reportar error explícito
+        $errorMsg = "No se encontró configuración de transporte para notificaciones (FCM_CREDENTIALS_PATH, NOTIFY_WEBHOOK_URL o FCM_ACCESS_TOKEN)."
+        $this->last_error = $errorMsg
+        print("[joss_notify] Advertencia: " . $errorMsg)
+        return {"ok": false, "sent": false, "error": $errorMsg, "data": $payload}
     }
 }
 
-func send($payload) {
+func dispatch($payload) {
     $n = new Notify()
-    (!empty($payload["apps"])) ? { $n->apps($payload["apps"]) } : {}
-    (!empty($payload["user"])) ? { $n->user($payload["user"]) } : {}
-    (!empty($payload["segment"])) ? { $n->segment($payload["segment"]) } : {}
-    (!empty($payload["title"])) ? { $n->title($payload["title"]) } : {}
-    (!empty($payload["message"])) ? { $n->message($payload["message"]) } : {}
-    (!empty($payload["html"])) ? { $n->html($payload["html"]) } : {}
-    (!empty($payload["type"])) ? { ($payload["type"] == "in_app") ? { $n->inApp() } : {} } : {}
-    (!empty($payload["schedule"])) ? { $n->schedule($payload["schedule"]) } : {}
+    ($payload["app"]) ? { $n->app($payload["app"]) } : {}
+    ($payload["apps"]) ? { $n->apps($payload["apps"]) } : {}
+    ($payload["user"]) ? { $n->user($payload["user"]) } : {}
+    ($payload["token"]) ? { $n->token($payload["token"]) } : {}
+    ($payload["segment"]) ? { $n->segment($payload["segment"]) } : {}
+    ($payload["topic"]) ? { $n->topic($payload["topic"]) } : {}
+    ($payload["title"]) ? { $n->title($payload["title"]) } : {}
+    ($payload["message"]) ? { $n->message($payload["message"]) } : {}
+    ($payload["body"]) ? { $n->body($payload["body"]) } : {}
+    ($payload["html"]) ? { $n->html($payload["html"]) } : {}
+    ($payload["data"]) ? { $n->data($payload["data"]) } : {}
+    ($payload["credentials"]) ? { $n->credentials($payload["credentials"]) } : {}
+    ($payload["type"] == "in_app") ? { $n->inApp() } : { $n->push() }
+    ($payload["schedule"]) ? { $n->schedule($payload["schedule"]) } : {}
     return $n->send()
 }

@@ -1,36 +1,104 @@
-# joss_notify 2.0
+# joss_notify 2.1.0
 
-`joss_notify` envia notificaciones push, in-app y a gateways HTTP. Es un JP v2 autocontenido con bytecode Joss, metadatos de IntelliSense y sidecars para Windows, Linux y macOS (amd64 y arm64). Se carga automaticamente, sin `use` ni dependencias de compilacion en el proyecto consumidor.
+Plugin oficial de notificaciones Push (Firebase Cloud Messaging HTTP v1 con Service Account OAuth2), Webhooks e In-App para el lenguaje de programación Joss.
 
-## Instalacion
+Empaquetado como un paquete `.jp` (JP v2) autocontenido, determinista y firmado con Ed25519. Se carga automáticamente en cualquier proyecto Joss que lo declare en `joss.yaml` o lo instale en el directorio `plugins/`.
+
+---
+
+## 🚀 Instalación
 
 ```bash
-joss pub add joss_notify 2.0.1
+joss pub add joss_notify
 ```
 
-## Configuracion
+O agrégalo en tu `joss.yaml`:
 
-Elige uno de estos modos en `env.joss`:
+```yaml
+dependencies:
+  joss_notify: "^2.1.0"
+```
 
-| Variable | Uso |
+---
+
+## ⚙️ Configuración (.env)
+
+El plugin detecta automáticamente la mejor estrategia de transporte configurada:
+
+| Variable | Descripción |
 | --- | --- |
-| `NOTIFY_WEBHOOK_URL` | URL del gateway de notificaciones de la aplicacion. |
-| `NOTIFY_WEBHOOK_TOKEN` | Token opcional enviado al gateway. |
-| `FCM_SERVER_KEY` | Credencial para envio directo compatible con FCM legacy. |
+| `FCM_CREDENTIALS_PATH` | Ruta al archivo JSON de credenciales de Firebase Service Account (ej: `storage/secrets/firebase-service-account.json`). Permite autenticación automática OAuth2 JWT RS256 para **FCM HTTP v1**. |
+| `FIREBASE_CREDENTIALS` | Alias opcional para la ruta del Service Account. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Estándar Google Cloud para Service Account. |
+| `FCM_ACCESS_TOKEN` y `FCM_PROJECT_ID` | Envío directo a FCM HTTP v1 usando Bearer Token OAuth2 pre-generado. |
+| `NOTIFY_WEBHOOK_URL` | URL de Webhook / Gateway personalizado para despachar payload JSON. |
+| `FCM_URL` y `FCM_SERVER_KEY` | Endpoint y Server Key para pasarelas FCM Legacy / proxies personalizados. |
 
-El modo webhook es el indicado cuando la aplicacion persiste notificaciones o las transmite por WebSocket. El modo FCM usa `user(token)` o `segment(topic)`. Si no hay un backend configurado, el plugin devuelve un error explicito; nunca aparenta haber enviado una notificacion.
+> **Nota de Seguridad**: Nunca incluyas archivos de credenciales (`firebase-service-account.json`) en paquetes cliente o repositorios públicos.
 
-## Uso
+---
+
+## 💻 Uso
+
+### 1. Invocación Fluida Orientada a Objetos:
 
 ```joss
-$result = Notify::title("Aviso")
-    ->message("Tu respaldo termino correctamente")
-    ->segment("usuarios")
+$notify = new Notify()
+$res = $notify->app("joss_red")
+    ->user($deviceToken)
+    ->title("Nueva Alerta de Seguridad")
+    ->message("Se ha detectado un nuevo inicio de sesión.")
+    ->data({"source": "auth", "priority": "high"})
+    ->send()
+
+($res["ok"]) ? {
+    print("Notificación enviada con éxito")
+} : {
+    print("Error enviando notificación: " . $notify->lastError())
+}
+```
+
+### 2. Envío a Tópico / Segmento:
+
+```joss
+$notify = new Notify()
+$res = $notify->apps(["joss_red", "estrella_music"])
+    ->segment("noticias")
+    ->title("Actualización de la Plataforma")
+    ->message("Nuevas funciones disponibles en la app.")
     ->send()
 ```
 
-La cadena acepta `app($id)` o `apps($ids)`, `segment($name)`, `user($token)`, `title($text)`, `message($text)`, `html($content)`, `inApp()` y `schedule($timestamp)`. `send()` devuelve la respuesta del proveedor para que la aplicacion pueda manejar los errores de forma explicita.
+### 3. Notificación In-App:
 
-## Distribucion y desarrollo
+```joss
+$notify = new Notify()
+$res = $notify->user($userId)
+    ->inApp()
+    ->title("Mensaje de bienvenida")
+    ->message("Gracias por unirte.")
+    ->send()
+```
 
-`joss_notify.jp` declara seis binarios nativos y contiene `META-INF/joss-symbols.json`, por lo que el editor puede mostrar las firmas del plugin tras instalarlo. Para regenerar el JP se requiere Go y Joss 3.6.0 o posterior; el usuario final no necesita esas herramientas.
+### 4. Invocación Directa / Funcional:
+
+```joss
+$res = joss_notify::send({
+    "app": "joss_red",
+    "user": $deviceToken,
+    "title": "Aviso Urgente",
+    "message": "Por favor revisa tu bandeja de entrada.",
+    "type": "push"
+})
+```
+
+---
+
+## 🛠️ Compilación a Paquete .jp
+
+Para compilar el plugin tras realizar modificaciones:
+
+```bash
+joss plugin compile .
+joss plugin inspect joss_notify.jp
+```
