@@ -8,12 +8,3 @@ environment:
   joss: ">=3.6.6"
 entry:
   main: src/plugin.joss
-native:
-  protocol: joss-rpc-v1
-  windows-amd64: https://github.com/joss-language/joss_notify/releases/download/v2.0.3/joss_notify-windows-amd64.exe
-  windows-arm64: https://github.com/joss-language/joss_notify/releases/download/v2.0.3/joss_notify-windows-arm64.exe
-  linux-amd64: https://github.com/joss-language/joss_notify/releases/download/v2.0.3/joss_notify-linux-amd64
-  linux-arm64: https://github.com/joss-language/joss_notify/releases/download/v2.0.3/joss_notify-linux-arm64
-  darwin-amd64: https://github.com/joss-language/joss_notify/releases/download/v2.0.3/joss_notify-darwin-amd64
-  darwin-arm64: https://github.com/joss-language/joss_notify/releases/download/v2.0.3/joss_notify-darwin-arm64
-dependencies:
