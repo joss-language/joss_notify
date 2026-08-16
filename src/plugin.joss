@@ -190,7 +190,7 @@ class Notify {
             }
         } : {}
 
-        // 3. Despacho FCM HTTP v1 con Service Account Credentials (OAuth2 JWT)
+        // 3. Despacho FCM HTTP v1 con Service Account Credentials (Standard Library RSA - Sin pip ni paquetes externos)
         $credsPath = ($this->credentials_path != "") ? $this->credentials_path : env("FCM_CREDENTIALS_PATH", "")
         ($credsPath == "") ? { $credsPath = env("FIREBASE_CREDENTIALS", "") } : {}
         ($credsPath == "") ? { $credsPath = env("GOOGLE_APPLICATION_CREDENTIALS", "") } : {}
@@ -199,7 +199,35 @@ class Notify {
         } : {}
 
         ($credsPath != "" && file_exists($credsPath)) ? {
-            $pyScript = "import sys, json, time, urllib.request, urllib.parse, base64
+            $pyScript = "import sys, json, time, hashlib, base64, urllib.request, urllib.parse
+
+def parse_pkcs_rsa(pem_str):
+    lines = pem_str.strip().splitlines()
+    body = ''.join([l for l in lines if not l.startswith('-----')])
+    der = base64.b64decode(body)
+    def read_l(d, i):
+        f = d[i]; i += 1
+        if f < 0x80: return f, i
+        n = f & 0x7f; length = 0
+        for _ in range(n): length = (length << 8) | d[i]; i += 1
+        return length, i
+    def parse_seq(d, i):
+        if d[i] != 0x30: raise ValueError('Expected Sequence')
+        i += 1
+        length, i = read_l(d, i)
+        end = i + length; items = []
+        while i < end:
+            tag = d[i]; i += 1
+            l, i = read_l(d, i)
+            items.append((tag, d[i:i+l]))
+            i += l
+        return items
+    items = parse_seq(der, 0)
+    rsa_der = items[2][1] if (len(items) >= 3 and items[2][0] == 0x04) else der
+    rsa_items = parse_seq(rsa_der, 0)
+    def to_i(b): return int.from_bytes(b, byteorder='big')
+    return to_i(rsa_items[1][1]), to_i(rsa_items[2][1]), to_i(rsa_items[3][1])
+
 def run_fcm(p_str, c_path):
     try:
         p = json.loads(p_str)
@@ -207,19 +235,22 @@ def run_fcm(p_str, c_path):
             c = json.load(f)
         client_email = c['client_email']
         project_id = c['project_id']
-        pk_pem = c['private_key'].encode('utf-8')
         t_uri = c.get('token_uri', 'https://oauth2.googleapis.com/token')
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import padding
-        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        n, e, d = parse_pkcs_rsa(c['private_key'])
         now = int(time.time())
         claim = {'iss': client_email, 'scope': 'https://www.googleapis.com/auth/firebase.messaging', 'aud': t_uri, 'iat': now, 'exp': now + 3600}
         def b64url(b): return base64.urlsafe_b64encode(b).rstrip(b'=').decode('utf-8')
         h_b64 = b64url(json.dumps({'alg': 'RS256', 'typ': 'JWT'}).encode('utf-8'))
         c_b64 = b64url(json.dumps(claim).encode('utf-8'))
         sig_in = f'{h_b64}.{c_b64}'.encode('utf-8')
-        pk = load_pem_private_key(pk_pem, password=None)
-        sig = pk.sign(sig_in, padding.PKCS1v15(), hashes.SHA256())
+        sha256_prefix = bytes.fromhex('3031300d060960864801650304020105000420')
+        digest = hashlib.sha256(sig_in).digest()
+        t = sha256_prefix + digest
+        k = (n.bit_length() + 7) // 8
+        ps = b'\xff' * (k - len(t) - 3)
+        em = b'\x00\x01' + ps + b'\x00' + t
+        sig_int = pow(int.from_bytes(em, byteorder='big'), d, n)
+        sig = sig_int.to_bytes(k, byteorder='big')
         jwt_tok = f'{h_b64}.{c_b64}.{b64url(sig)}'
         req_data = urllib.parse.urlencode({'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': jwt_tok}).encode('utf-8')
         o_req = urllib.request.Request(t_uri, data=req_data, headers={'Content-Type': 'application/x-www-form-urlencoded'})
@@ -230,7 +261,7 @@ def run_fcm(p_str, c_path):
         custom_data = p.get('data', {})
         data_map = {}
         if isinstance(custom_data, dict):
-            for k, v in custom_data.items(): data_map[str(k)] = str(v)
+            for k_c, v_c in custom_data.items(): data_map[str(k_c)] = str(v_c)
         app_name = str(p.get('apps', [''])[0] if isinstance(p.get('apps'), list) and len(p.get('apps')) > 0 else p.get('apps', ''))
         data_map['app'] = app_name
         data_map['type'] = str(p.get('type', 'push'))
@@ -247,8 +278,8 @@ def run_fcm(p_str, c_path):
         fcm_req = urllib.request.Request(f'https://fcm.googleapis.com/v1/projects/{project_id}/messages:send', data=json.dumps({'message': msg}).encode('utf-8'), headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
         with urllib.request.urlopen(fcm_req, timeout=15) as fr:
             return {'ok': True, 'sent': True, 'response': json.loads(fr.read().decode('utf-8'))}
-    except Exception as e:
-        return {'ok': False, 'error': str(e)}
+    except Exception as exc:
+        return {'ok': False, 'error': str(exc)}
 if __name__ == '__main__':
     print(json.dumps(run_fcm(sys.argv[1] if len(sys.argv) > 1 else '{}', sys.argv[2] if len(sys.argv) > 2 else 'storage/secrets/firebase-service-account.json')))
 "
