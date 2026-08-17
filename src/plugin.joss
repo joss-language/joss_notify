@@ -12,7 +12,140 @@ class Notify {
         $this->data_value = {}
         $this->credentials_path = ""
         $this->last_error = ""
+        $this->auto_clean = true
+        
+        // Auto-creación de tablas al instanciar el plugin
+        $this->ensureTables()
     }
+
+    func ensureTables() {
+        // 1. Tabla push_devices
+        (!Schema::hasTable("push_devices")) ? {
+            Schema::create("push_devices", func($table) {
+                $table->id()
+                $table->bigInteger("user_id")->unsigned()
+                $table->string("device_token", 500)->unique()
+                $table->string("platform", 50)->default("android")
+                $table->string("app_id", 100)->default("joss_red")
+                $table->string("language", 10)->default("es")
+                $table->boolean("is_active")->default(true)
+                $table->boolean("notifications_enabled")->default(true)
+                $table->timestamps()
+            })
+            print("[joss_notify] Tabla 'push_devices' creada automáticamente por el plugin.")
+        } : {}
+
+        // 2. Tabla notifications
+        (!Schema::hasTable("notifications")) ? {
+            Schema::create("notifications", func($table) {
+                $table->id()
+                $table->string("app_id", 100)->default("joss_red")
+                $table->bigInteger("user_id")->unsigned()
+                $table->string("title", 255)
+                $table->text("message")
+                $table->longText("html_content")->nullable()
+                $table->string("type", 50)->default("push")
+                $table->string("status", 50)->default("pending")
+                $table->string("delivery_mode", 50)->default("durable")
+                $table->string("delivery_window", 50)->default("until_expiration")
+                $table->timestamp("expires_at")->nullable()
+                $table->timestamps()
+            })
+            print("[joss_notify] Tabla 'notifications' creada automáticamente por el plugin.")
+        } : {}
+    }
+
+    // --- API DE GESTIÓN DE DISPOSITIVOS ---
+
+    func registerDevice($token, $userId, $appId, $platform, $notificationsEnabled) {
+        $this->ensureTables()
+        (empty($token)) ? { return false } : {}
+        
+        $p = ($platform != "" && $platform != nil) ? $platform : "android"
+        $app = ($appId != "" && $appId != nil) ? $appId : "default"
+        $enabled = ($notificationsEnabled != nil) ? ($notificationsEnabled ? 1 : 0) : 1
+        
+        $lookup = new GranDB()
+        $lookup->table("push_devices")
+        $lookup->where("device_token", $token)
+        $device = $lookup->first()
+
+        ($device) ? {
+            $update = new GranDB()
+            $update->table("push_devices")
+            $update->where("id", $device["id"])
+            return $update->update({
+                "user_id": $userId,
+                "platform": $p,
+                "app_id": $app,
+                "is_active": 1,
+                "notifications_enabled": $enabled
+            })
+        } : {
+            $insert = new GranDB()
+            $insert->table("push_devices")
+            return $insert->insert({
+                "user_id": $userId,
+                "device_token": $token,
+                "platform": $p,
+                "app_id": $app,
+                "language": "es",
+                "is_active": 1,
+                "notifications_enabled": $enabled
+            })
+        }
+    }
+
+    func unregisterDevice($token, $userId, $appId) {
+        $this->ensureTables()
+        (empty($token)) ? { return false } : {}
+        $db = new GranDB()
+        $db->table("push_devices")
+        $db->where("device_token", $token)
+        ($userId != nil && $userId != "") ? { $db->where("user_id", $userId) } : {}
+        ($appId != nil && $appId != "") ? { $db->where("app_id", $appId) } : {}
+        return $db->update({"is_active": 0})
+    }
+
+    func deleteDevice($token) {
+        $this->ensureTables()
+        (empty($token)) ? { return false } : {}
+        $db = new GranDB()
+        $db->table("push_devices")
+        $db->where("device_token", $token)
+        return $db->delete()
+    }
+
+    // --- API DE BANDEJA DE MENSAJES Y ACKNOWLEDGE ---
+
+    func acknowledge($messageId, $userId, $appId) {
+        $this->ensureTables()
+        (empty($messageId)) ? { return false } : {}
+        $db = new GranDB()
+        $db->table("notifications")
+        $db->where("id", $messageId)
+        ($userId != nil && $userId != "") ? { $db->where("user_id", $userId) } : {}
+        ($appId != nil && $appId != "") ? { $db->where("app_id", $appId) } : {}
+        $deleted = $db->delete()
+        print("[joss_notify] Mensaje ID " . $messageId . " recibido y eliminado de la base de datos.")
+        return $deleted
+    }
+
+    func pendingMessages($userId, $appId, $limit) {
+        $this->ensureTables()
+        $lim = ($limit != nil && $limit > 0) ? $limit : 50
+        $db = new GranDB()
+        $db->table("notifications")
+        $db->where("user_id", $userId)
+        ($appId != nil && $appId != "") ? { $db->where("app_id", $appId) } : {}
+        $db->where("status", "pending")
+        $db->where("delivery_mode", "durable")
+        $db->orderBy("id", "ASC")
+        $db->limit($lim)
+        return $db->get()
+    }
+
+    // --- FLUENT BUILDER PARA ENVÍO ---
 
     func app($app) {
         $this->app_ids = [$app]
@@ -119,12 +252,34 @@ class Notify {
         return $this
     }
 
+    func autoClean($enabled) {
+        $this->auto_clean = ($enabled ? true : false)
+        return $this
+    }
+
     func lastError() {
         return $this->last_error
     }
 
+    // --- PODA AUTOMÁTICA DE TOKENS DESINSTALADOS ---
+
+    func cleanUninstalled($results) {
+        ($results && is_array($results)) ? {
+            foreach ($results as $item) {
+                ($item["ok"] == false && $item["error"] && $item["token"]) ? {
+                    $errStr = $item["error"]
+                    (Str::contains($errStr, "404") || Str::contains($errStr, "Not Found") || Str::contains($errStr, "UNREGISTERED") || Str::contains($errStr, "INVALID_ARGUMENT") || Str::contains($errStr, "not a valid FCM")) ? {
+                        print("[joss_notify] Dispositivo desinstalado detectado (" . $item["token"] . "). Eliminando automáticamente de push_devices...\n")
+                        $this->deleteDevice($item["token"])
+                    } : {}
+                } : {}
+            }
+        } : {}
+    }
+
+    // --- MÉTODO PRINCIPAL DE ENVÍO ---
+
     func send() {
-        // Consolidar lista de destinatarios
         $targets = []
         (count($this->tokens_list) > 0) ? {
             $targets = $this->tokens_list
@@ -158,7 +313,6 @@ class Notify {
         $fcmToken = env("FCM_ACCESS_TOKEN", env("FCM_BEARER_TOKEN", ""))
         $fcmProject = env("FCM_PROJECT_ID", env("FIREBASE_PROJECT_ID", ""))
         
-        // Si no se definió FCM_PROJECT_ID pero existe archivo de credenciales, extraer project_id con JSON nativo
         ($fcmProject == "") ? {
             $credsPath = ($this->credentials_path != "") ? $this->credentials_path : env("FCM_CREDENTIALS_PATH", "storage/secrets/firebase-service-account.json")
             (file_exists($credsPath)) ? {
@@ -193,7 +347,6 @@ class Notify {
                 "Content-Type": "application/json"
             }
 
-            // Enviar a topic si está configurado
             ($this->segment_value != "" && count($targets) == 0) ? {
                 $topicMsg = {
                     "message": {
@@ -207,8 +360,8 @@ class Notify {
                 return {"ok": true, "sent": true, "gateway": "fcm_v1_native_topic", "response": $res}
             } : {}
 
-            // Despachar a la lista de tokens
             $sentCount = 0
+            $itemResults = []
             foreach ($targets as $tok) {
                 $singleMsg = {
                     "message": {
@@ -219,12 +372,20 @@ class Notify {
                     }
                 }
                 $res = Http::json("POST", $fcmUrl, $singleMsg, $headers)
-                ($res && $res["name"]) ? { $sentCount = $sentCount + 1 } : {}
+                ($res && $res["name"]) ? {
+                    $sentCount = $sentCount + 1
+                    $itemResults = append($itemResults, {"ok": true, "token": $tok, "response": $res})
+                } : {
+                    $errText = ($res && $res["error"]) ? JSON::stringify($res["error"]) : "Error"
+                    $itemResults = append($itemResults, {"ok": false, "token": $tok, "error": $errText})
+                }
             }
+
+            ($this->auto_clean) ? { $this->cleanUninstalled($itemResults) } : {}
 
             print("[joss_notify] Push FCM v1 completado: " . $sentCount . "/" . count($targets) . " entregados.")
             $this->last_error = ""
-            return {"ok": true, "sent": ($sentCount > 0), "total": count($targets), "success_count": $sentCount, "gateway": "fcm_v1_native"}
+            return {"ok": true, "sent": ($sentCount > 0), "total": count($targets), "success_count": $sentCount, "gateway": "fcm_v1_native", "results": $itemResults}
         } : {}
 
         // 3. Despacho FCM HTTP v1 Paralelo con Service Account Credentials (Standard Library RSA)
@@ -342,7 +503,6 @@ def run_fcm(p_str, c_path):
         if len(raw_tokens) == 0:
             return {'ok': False, 'error': 'No device tokens specified'}
 
-        # Envío en paralelo con ThreadPoolExecutor
         workers = min(30, max(4, len(raw_tokens)))
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
@@ -376,6 +536,12 @@ if __name__ == '__main__':
                 $res = JSON::parse($resRaw)
                 ($res && $res["ok"] == true) ? {
                     print("[joss_notify] Push FCM v1 paralelo completado: " . $res["success_count"] . "/" . $res["total"] . " entregados exitosamente.")
+                    
+                    // Poda automática en base de datos de tokens desinstalados
+                    ($this->auto_clean && $res["results"]) ? {
+                        $this->cleanUninstalled($res["results"])
+                    } : {}
+
                     $this->last_error = ""
                     return {"ok": true, "sent": true, "gateway": "fcm_v1_service_account_parallel", "total": $res["total"], "success_count": $res["success_count"], "results": $res["results"]}
                 } : {
@@ -447,4 +613,24 @@ func dispatch($payload) {
     ($payload["type"] == "in_app") ? { $n->inApp() } : { $n->push() }
     ($payload["schedule"]) ? { $n->schedule($payload["schedule"]) } : {}
     return $n->send()
+}
+
+func registerDevice($token, $userId, $appId, $platform, $notificationsEnabled) {
+    return (new Notify())->registerDevice($token, $userId, $appId, $platform, $notificationsEnabled)
+}
+
+func unregisterDevice($token, $userId, $appId) {
+    return (new Notify())->unregisterDevice($token, $userId, $appId)
+}
+
+func acknowledge($messageId, $userId, $appId) {
+    return (new Notify())->acknowledge($messageId, $userId, $appId)
+}
+
+func pendingMessages($userId, $appId, $limit) {
+    return (new Notify())->pendingMessages($userId, $appId, $limit)
+}
+
+func ensureTables() {
+    return (new Notify())->ensureTables()
 }
