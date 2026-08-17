@@ -8,14 +8,18 @@ class Notify {
         $this->message_value = ""
         $this->html_value = ""
         $this->type_value = "push"
+        $this->delivery_mode_value = "durable"
+        $this->delivery_window_value = "until_expiration"
         $this->schedule_value = 0
         $this->data_value = {}
         $this->credentials_path = ""
         $this->last_error = ""
         $this->auto_clean = true
+        $this->expire_days = 2
         
-        // Auto-creación de tablas al instanciar el plugin
+        // Auto-creación de tablas y purga de mensajes viejos (> 2 días)
         $this->ensureTables()
+        $this->cleanExpiredMessages($this->expire_days)
     }
 
     func ensureTables() {
@@ -52,6 +56,32 @@ class Notify {
                 $table->timestamps()
             })
             print("[joss_notify] Tabla 'notifications' creada automáticamente por el plugin.")
+        } : {}
+    }
+
+    // --- PURGA DE MENSAJES EXPIRADOS / VIEJOS (> 2 DÍAS) ---
+
+    func cleanExpiredMessages($days) {
+        $maxDays = ($days != nil && $days > 0) ? $days : 2
+        $cutoffDate = date("Y-m-d H:i:s", strtotime("-" . $maxDays . " days"))
+        
+        $db = new GranDB()
+        $db->table("notifications")
+        $db->where("created_at", "<", $cutoffDate)
+        $deleted = $db->delete()
+        ($deleted && $deleted > 0) ? {
+            print("[joss_notify] Poda automática: " . $deleted . " mensaje(s) de más de " . $maxDays . " días eliminados de la BD.")
+        } : {}
+
+        // Eliminar mensajes con expires_at superado
+        $nowStr = now()
+        $expDb = new GranDB()
+        $expDb->table("notifications")
+        $expDb->where("expires_at", "!=", "")
+        $expDb->where("expires_at", "<", $nowStr)
+        $expDeleted = $expDb->delete()
+        ($expDeleted && $expDeleted > 0) ? {
+            print("[joss_notify] Poda automática: " . $expDeleted . " mensaje(s) con fecha vencida eliminados de la BD.")
         } : {}
     }
 
@@ -133,6 +163,7 @@ class Notify {
 
     func pendingMessages($userId, $appId, $limit) {
         $this->ensureTables()
+        $this->cleanExpiredMessages($this->expire_days)
         $lim = ($limit != nil && $limit > 0) ? $limit : 50
         $db = new GranDB()
         $db->table("notifications")
@@ -242,6 +273,16 @@ class Notify {
         return $this
     }
 
+    func durable() {
+        $this->delivery_mode_value = "durable"
+        return $this
+    }
+
+    func temporary() {
+        $this->delivery_mode_value = "temporary"
+        return $this
+    }
+
     func credentials($path) {
         $this->credentials_path = $path
         return $this
@@ -249,6 +290,11 @@ class Notify {
 
     func schedule($timestamp) {
         $this->schedule_value = $timestamp
+        return $this
+    }
+
+    func expireDays($days) {
+        $this->expire_days = $days
         return $this
     }
 
@@ -268,7 +314,7 @@ class Notify {
             foreach ($results as $item) {
                 ($item["ok"] == false && $item["error"] && $item["token"]) ? {
                     $errStr = $item["error"]
-                    (Str::contains($errStr, "404") || Str::contains($errStr, "Not Found") || Str::contains($errStr, "UNREGISTERED") || Str::contains($errStr, "INVALID_ARGUMENT") || Str::contains($errStr, "not a valid FCM")) ? {
+                    (str_contains($errStr, "404") || str_contains($errStr, "Not Found") || str_contains($errStr, "UNREGISTERED") || str_contains($errStr, "INVALID_ARGUMENT") || str_contains($errStr, "not a valid FCM")) ? {
                         print("[joss_notify] Dispositivo desinstalado detectado (" . $item["token"] . "). Eliminando automáticamente de push_devices...\n")
                         $this->deleteDevice($item["token"])
                     } : {}
@@ -280,6 +326,8 @@ class Notify {
     // --- MÉTODO PRINCIPAL DE ENVÍO ---
 
     func send() {
+        $this->cleanExpiredMessages($this->expire_days)
+
         $targets = []
         (count($this->tokens_list) > 0) ? {
             $targets = $this->tokens_list
@@ -633,4 +681,8 @@ func pendingMessages($userId, $appId, $limit) {
 
 func ensureTables() {
     return (new Notify())->ensureTables()
+}
+
+func cleanExpiredMessages($days) {
+    return (new Notify())->cleanExpiredMessages($days)
 }
