@@ -1,4 +1,4 @@
-class Notify {
+public class Notify {
     Init constructor() {
         $this->app_ids = []
         $this->segment_value = ""
@@ -21,10 +21,10 @@ class Notify {
         $this->ensureTables()
     }
 
-    func ensureTables() {
+    public func ensureTables() {
         // 1. Tabla push_devices
         (!Schema::hasTable("push_devices")) ? {
-            Schema::create("push_devices", func($table) {
+            Schema::create("push_devices", func(mixed $table) {
                 $table->id()
                 $table->bigInteger("user_id")->unsigned()
                 $table->string("device_token", 500)->unique()
@@ -40,7 +40,7 @@ class Notify {
 
         // 2. Tabla notifications
         (!Schema::hasTable("notifications")) ? {
-            Schema::create("notifications", func($table) {
+            Schema::create("notifications", func(mixed $table) {
                 $table->id()
                 $table->string("app_id", 100)->default("joss_red")
                 $table->bigInteger("user_id")->unsigned()
@@ -58,7 +58,7 @@ class Notify {
         } : {
             // Verificar columnas opcionales
             (!Schema::hasColumn("notifications", "created_at")) ? {
-                Schema::table("notifications", func($table) {
+                Schema::table("notifications", func(mixed $table) {
                     $table->timestamps()
                 })
             } : {}
@@ -67,7 +67,7 @@ class Notify {
 
     // --- PURGA DE MENSAJES EXPIRADOS / VIEJOS (> 2 DÍAS) ---
 
-    func cleanExpiredMessages($days) {
+    public func cleanExpiredMessages(mixed $days) {
         $maxDays = ($days != nil && $days > 0) ? $days : 2
         $cutoffDate = date("Y-m-d H:i:s", strtotime("-" . $maxDays . " days"))
         
@@ -97,7 +97,7 @@ class Notify {
 
     // --- API DE GESTIÓN DE DISPOSITIVOS ---
 
-    func registerDevice($token, $userId, $appId, $platform, $notificationsEnabled) {
+    public func registerDevice(mixed $token, mixed $userId, mixed $appId, mixed $platform, mixed $notificationsEnabled) {
         $this->ensureTables()
         (empty($token)) ? { return false } : {}
         
@@ -136,7 +136,7 @@ class Notify {
         }
     }
 
-    func unregisterDevice($token, $userId, $appId) {
+    public func unregisterDevice(mixed $token, mixed $userId, mixed $appId) {
         $this->ensureTables()
         (empty($token)) ? { return false } : {}
         $db = new GranDB()
@@ -147,7 +147,7 @@ class Notify {
         return $db->update({"is_active": 0})
     }
 
-    func deleteDevice($token) {
+    public func deleteDevice(mixed $token) {
         $this->ensureTables()
         (empty($token)) ? { return false } : {}
         $db = new GranDB()
@@ -158,7 +158,7 @@ class Notify {
 
     // --- API DE BANDEJA DE MENSAJES Y ACKNOWLEDGE ---
 
-    func acknowledge($messageId, $userId, $appId) {
+    public func acknowledge(mixed $messageId, mixed $userId, mixed $appId) {
         $this->ensureTables()
         (empty($messageId)) ? { return false } : {}
         $db = new GranDB()
@@ -171,7 +171,7 @@ class Notify {
         return $deleted
     }
 
-    func pendingMessages($userId, $appId, $limit) {
+    public func pendingMessages(mixed $userId, mixed $appId, mixed $limit) {
         $this->ensureTables()
         $this->cleanExpiredMessages($this->expire_days)
         $lim = ($limit != nil && $limit > 0) ? $limit : 50
@@ -188,27 +188,27 @@ class Notify {
 
     // --- FLUENT BUILDER PARA ENVÍO ---
 
-    func app($app) {
+    public func app(mixed $app) {
         $this->app_ids = [$app]
         return $this
     }
 
-    func apps($apps) {
+    public func apps(mixed $apps) {
         $this->app_ids = $apps
         return $this
     }
 
-    func segment($segment) {
+    public func segment(mixed $segment) {
         $this->segment_value = $segment
         return $this
     }
 
-    func topic($topic) {
+    public func topic(mixed $topic) {
         $this->segment_value = $topic
         return $this
     }
 
-    func user($user) {
+    public func user(mixed $user) {
         (is_array($user)) ? {
             $this->tokens_list = $user
             $this->user_value = ""
@@ -219,7 +219,7 @@ class Notify {
         return $this
     }
 
-    func token($token) {
+    public func token(mixed $token) {
         (is_array($token)) ? {
             $this->tokens_list = $token
             $this->user_value = ""
@@ -230,7 +230,7 @@ class Notify {
         return $this
     }
 
-    func users($users) {
+    public func users(mixed $users) {
         (is_array($users)) ? {
             $this->tokens_list = $users
         } : {
@@ -239,7 +239,7 @@ class Notify {
         return $this
     }
 
-    func tokens($tokens) {
+    public func tokens(mixed $tokens) {
         (is_array($tokens)) ? {
             $this->tokens_list = $tokens
         } : {
@@ -248,78 +248,78 @@ class Notify {
         return $this
     }
 
-    func title($title) {
+    public func title(mixed $title) {
         $this->title_value = $title
         return $this
     }
 
-    func message($message) {
+    public func message(mixed $message) {
         $this->message_value = $message
         return $this
     }
 
-    func body($body) {
+    public func body(mixed $body) {
         $this->message_value = $body
         return $this
     }
 
-    func html($html) {
+    public func html(mixed $html) {
         $this->html_value = $html
         return $this
     }
 
-    func data($data) {
+    public func data(mixed $data) {
         $this->data_value = $data
         return $this
     }
 
-    func inApp() {
+    public func inApp() {
         $this->type_value = "in_app"
         return $this
     }
 
-    func push() {
+    public func push() {
         $this->type_value = "push"
         return $this
     }
 
-    func durable() {
+    public func durable() {
         $this->delivery_mode_value = "durable"
         return $this
     }
 
-    func temporary() {
+    public func temporary() {
         $this->delivery_mode_value = "temporary"
         return $this
     }
 
-    func credentials($path) {
+    public func credentials(mixed $path) {
         $this->credentials_path = $path
         return $this
     }
 
-    func schedule($timestamp) {
+    public func schedule(mixed $timestamp) {
         $this->schedule_value = $timestamp
         return $this
     }
 
-    func expireDays($days) {
+    public func expireDays(mixed $days) {
         $this->expire_days = $days
         return $this
     }
 
-    func autoClean($enabled) {
+    public func autoClean(mixed $enabled) {
         $this->auto_clean = ($enabled ? true : false)
         return $this
     }
 
-    func lastError() {
+    public func lastError() {
         return $this->last_error
     }
 
     // --- PODA AUTOMÁTICA DE TOKENS DESINSTALADOS ---
 
-    func cleanUninstalled($results) {
+    public func cleanUninstalled(mixed $results) {
         ($results && is_array($results)) ? {
             foreach ($results as $item) {
                 ($item["ok"] == false && $item["error"] && $item["token"]) ? {
@@ -335,7 +335,7 @@ class Notify {
 
     // --- MÉTODO PRINCIPAL DE ENVÍO ---
 
-    func send() {
+    public func send() {
         $this->cleanExpiredMessages($this->expire_days)
 
         $targets = []
@@ -652,7 +652,7 @@ if __name__ == '__main__':
     }
 }
 
-func dispatch($payload) {
+public func dispatch(mixed $payload) {
     $n = new Notify()
     ($payload["app"]) ? { $n->app($payload["app"]) } : {}
     ($payload["apps"]) ? { $n->apps($payload["apps"]) } : {}
@@ -673,26 +673,26 @@ func dispatch($payload) {
     return $n->send()
 }
 
-func registerDevice($token, $userId, $appId, $platform, $notificationsEnabled) {
+public func registerDevice(mixed $token, mixed $userId, mixed $appId, mixed $platform, mixed $notificationsEnabled) {
     return (new Notify())->registerDevice($token, $userId, $appId, $platform, $notificationsEnabled)
 }
 
-func unregisterDevice($token, $userId, $appId) {
+public func unregisterDevice(mixed $token, mixed $userId, mixed $appId) {
     return (new Notify())->unregisterDevice($token, $userId, $appId)
 }
 
-func acknowledge($messageId, $userId, $appId) {
+public func acknowledge(mixed $messageId, mixed $userId, mixed $appId) {
     return (new Notify())->acknowledge($messageId, $userId, $appId)
 }
 
-func pendingMessages($userId, $appId, $limit) {
+public func pendingMessages(mixed $userId, mixed $appId, mixed $limit) {
     return (new Notify())->pendingMessages($userId, $appId, $limit)
 }
 
-func ensureTables() {
+public func ensureTables() {
     return (new Notify())->ensureTables()
 }
 
-func cleanExpiredMessages($days) {
+public func cleanExpiredMessages(mixed $days) {
     return (new Notify())->cleanExpiredMessages($days)
 }
