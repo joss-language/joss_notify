@@ -1,5 +1,5 @@
 name: joss_notify
-version: 2.2.2
+version: 2.2.3
 description: Plugin oficial de notificaciones Push (FCM v1 / OAuth2) y bandeja interna con auto-migración de tablas y auto-poda de dispositivos desinstalados.
 repository: https://github.com/joss-language/joss_notify
 license: MIT
@@ -8,3 +8,8 @@ environment:
   joss: ">=3.6.7"
 entry:
   main: src/plugin.joss
+commands:
+  notify:send:
+    description: "Envía una notificación de prueba o alerta a un canal específico"
+    usage: "joss notify:send <canal> <mensaje>"
+    protected: true
