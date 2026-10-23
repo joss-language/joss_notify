@@ -86,7 +86,7 @@ public class Notify {
             $nowStr = now()
             $expDb = new GranDB()
             $expDb->table("notifications")
-            $expDb->where("expires_at", "!=", "")
+            $expDb->whereNotNull("expires_at")
             $expDb->where("expires_at", "<", $nowStr)
             $expDeleted = $expDb->delete()
             ($expDeleted && $expDeleted > 0) ? {
@@ -578,10 +578,10 @@ if __name__ == '__main__':
 "
             $payloadJson = JSON::stringify($payload)
             $resRaw = ""
-            $pyCandidates = ["python3", "python", "/usr/bin/python3", "/usr/local/bin/python3", "py"]
+            $pyCandidates = ["python", "py", "python3", "/usr/bin/python3", "/usr/local/bin/python3"]
             $customPy = env("PYTHON_BIN", env("PYTHON_PATH", ""))
             ($customPy != "") ? {
-                $pyCandidates = [$customPy, "python3", "python", "/usr/bin/python3", "/usr/local/bin/python3", "py"]
+                $pyCandidates = [$customPy, "python", "py", "python3", "/usr/bin/python3", "/usr/local/bin/python3"]
             }
 
             foreach ($pyCandidates as $cand) {
